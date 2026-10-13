@@ -1,0 +1,100 @@
+name: Threat Intelligence Platform CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test-microservices:
+    name: Run Microservices Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: threatintel
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/api_server/requirements.txt
+          pip install pytest flake8
+
+      - name: Initialize PostgreSQL Database Schema
+        run: |
+          PGPASSWORD=postgrespassword psql -h localhost -U postgres -d threatintel -f db/init.sql
+
+      - name: Run Test Suite
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: threatintel
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+        run: |
+          pytest -v services/
+
+  build-docker-images:
+    name: Build Microservices Docker Images
+    needs: test-microservices
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - name: collector
+            dockerfile: services/collector/Dockerfile
+          - name: enricher
+            dockerfile: services/enricher/Dockerfile
+          - name: api_server
+            dockerfile: services/api_server/Dockerfile
+          - name: frontend
+            dockerfile: frontend/Dockerfile
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: actions/setup-buildx-action@v3
+
+      - name: Build Docker image for ${{ matrix.service.name }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.service.dockerfile }}
+          push: false
+          tags: threatintel-${{ matrix.service.name }}:latest
