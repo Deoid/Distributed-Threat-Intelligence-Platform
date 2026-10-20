@@ -40,10 +40,8 @@ yarn-debug.log*
 yarn-error.log*
 
 # Environment & Secrets
-.env
-.env.local
-.env.production
-!.env.production.example
+.env*
+*.env
 
 # Operating System files
 .DS_Store
